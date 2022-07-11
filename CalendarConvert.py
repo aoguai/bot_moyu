@@ -1,174 +1,423 @@
-# -*- coding:utf-8 -*-
-"""摸鱼日历： 发送 摸鱼日历 即可"""
-from botoy.decorators import ignore_botself
-from botoy.contrib import plugin_receiver, file_to_base64
-
-from ..bot_Action_text import *
-
-from PIL import Image
-from PIL import ImageDraw
-from PIL import ImageFont
-
+# lunar.py
+# 2015/02/27 罗兵
 import time
 import datetime
-import random
-import os
+import demjson
 
-from re import sub
-from demjson import decode
+class Lunar(object):
+    # ******************************************************************************
+    # 下面为阴历计算所需的数据,为节省存储空间,所以采用下面比较变态的存储方法.
+    # ******************************************************************************
+    # 数组g_lunar_month_day存入阴历1901年到2050年每年中的月天数信息，
+    # 阴历每月只能是29或30天，一年用12（或13）个二进制位表示，对应位为1表30天，否则为29天
+    g_lunar_month_day = [
+        0x4ae0, 0xa570, 0x5268, 0xd260, 0xd950, 0x6aa8, 0x56a0, 0x9ad0, 0x4ae8, 0x4ae0,  # 1910
+        0xa4d8, 0xa4d0, 0xd250, 0xd548, 0xb550, 0x56a0, 0x96d0, 0x95b0, 0x49b8, 0x49b0,  # 1920
+        0xa4b0, 0xb258, 0x6a50, 0x6d40, 0xada8, 0x2b60, 0x9570, 0x4978, 0x4970, 0x64b0,  # 1930
+        0xd4a0, 0xea50, 0x6d48, 0x5ad0, 0x2b60, 0x9370, 0x92e0, 0xc968, 0xc950, 0xd4a0,  # 1940
+        0xda50, 0xb550, 0x56a0, 0xaad8, 0x25d0, 0x92d0, 0xc958, 0xa950, 0xb4a8, 0x6ca0,  # 1950
+        0xb550, 0x55a8, 0x4da0, 0xa5b0, 0x52b8, 0x52b0, 0xa950, 0xe950, 0x6aa0, 0xad50,  # 1960
+        0xab50, 0x4b60, 0xa570, 0xa570, 0x5260, 0xe930, 0xd950, 0x5aa8, 0x56a0, 0x96d0,  # 1970
+        0x4ae8, 0x4ad0, 0xa4d0, 0xd268, 0xd250, 0xd528, 0xb540, 0xb6a0, 0x96d0, 0x95b0,  # 1980
+        0x49b0, 0xa4b8, 0xa4b0, 0xb258, 0x6a50, 0x6d40, 0xada0, 0xab60, 0x9370, 0x4978,  # 1990
+        0x4970, 0x64b0, 0x6a50, 0xea50, 0x6b28, 0x5ac0, 0xab60, 0x9368, 0x92e0, 0xc960,  # 2000
+        0xd4a8, 0xd4a0, 0xda50, 0x5aa8, 0x56a0, 0xaad8, 0x25d0, 0x92d0, 0xc958, 0xa950,  # 2010
+        0xb4a0, 0xb550, 0xb550, 0x55a8, 0x4ba0, 0xa5b0, 0x52b8, 0x52b0, 0xa930, 0x74a8,  # 2020
+        0x6aa0, 0xad50, 0x4da8, 0x4b60, 0x9570, 0xa4e0, 0xd260, 0xe930, 0xd530, 0x5aa0,  # 2030
+        0x6b50, 0x96d0, 0x4ae8, 0x4ad0, 0xa4d0, 0xd258, 0xd250, 0xd520, 0xdaa0, 0xb5a0,  # 2040
+        0x56d0, 0x4ad8, 0x49b0, 0xa4b8, 0xa4b0, 0xaa50, 0xb528, 0x6d20, 0xada0, 0x55b0,  # 2050
+    ]
 
-from .CalendarConvert import *
+    # 数组gLanarMonth存放阴历1901年到2050年闰月的月份，如没有则为0，每字节存两年
+    g_lunar_month = [
+        0x00, 0x50, 0x04, 0x00, 0x20,  # 1910
+        0x60, 0x05, 0x00, 0x20, 0x70,  # 1920
+        0x05, 0x00, 0x40, 0x02, 0x06,  # 1930
+        0x00, 0x50, 0x03, 0x07, 0x00,  # 1940
+        0x60, 0x04, 0x00, 0x20, 0x70,  # 1950
+        0x05, 0x00, 0x30, 0x80, 0x06,  # 1960
+        0x00, 0x40, 0x03, 0x07, 0x00,  # 1970
+        0x50, 0x04, 0x08, 0x00, 0x60,  # 1980
+        0x04, 0x0a, 0x00, 0x60, 0x05,  # 1990
+        0x00, 0x30, 0x80, 0x05, 0x00,  # 2000
+        0x40, 0x02, 0x07, 0x00, 0x50,  # 2010
+        0x04, 0x09, 0x00, 0x60, 0x04,  # 2020
+        0x00, 0x20, 0x60, 0x05, 0x00,  # 2030
+        0x30, 0xb0, 0x06, 0x00, 0x50,  # 2040
+        0x02, 0x07, 0x00, 0x50, 0x03  # 2050
+    ]
 
-arr1 = [
-    "早上好,摸鱼人!\n\n$1是摸鱼时间，该摸鱼的时候\n摸鱼,别让自己忙碌起来，老板\n不会关心你，只有我会关心你!",
-    "早上好,摸鱼人\n\n又到$1了,摸鱼人的$1只想\n安安静静的摸鱼,工作什么的能\n推到下周就推到下周!\n毕竟身体是自己的,别累坏了自\n己,反而得不偿失!",
-    "早上好,摸鱼人\n\n又是元气满满的一天哦!\n千万要记得,工作时候一定要摸\n鱼,只要还工作!钱自然不会少\n你的!",
-    "早上好，摸鱼人!\n\n即使工作有压,也要好好摸鱼\n活下去,因为其它都是浮云!身\n体才是自己的,注意工作摸鱼两\n不误哟!",
-    "早安，摸鱼人!\n\n虽然摸鱼很爽,但是也别贪多!\n注意提防老板和监控哟!\n下午的时候来杯咖啡提提神，时\n间很快就过去啦!",
-    "早安,摸鱼人!\n\n工作再疲惫,划水要学会,\n工作再紧张,摸鱼不能忘。\n工作再疲惫、再紧张,也一定不\n要忘记摸鱼哦!"
-]
+    START_YEAR = 1901
 
-arr2 = [
-    "    偶尔摸鱼有害健康,常常\n摸鱼收获满满。",
-    "    人生就是浑水,你不去趟\n，怎么能摸鱼呢?",
-    "    “鱼”是我养的宠物,再忙都\n要花点时间摸摸才行!",
-    "    感觉有什么东西在扒拉我\n,以为是爱情的魔爪,没想到是\n你的鱼钩!",
-    "    做个优秀的摸鱼人,要摸\n遍有所企业和岗位,摸过所有\n不曾摸过的,才不虚此班!",
-    "    相比于上班划水摸鱼,按\n时下班才会让人更快乐!",
-    "    摸鱼人加班的信念是什么\n?是责任么?不,TM是贫穷!",
-    "    现在时间告诉我,认真工作\n的时间已经过了,到了该摸鱼\n的时候了。",
-    "    钱能治愈一切自卑,摸鱼\n能治愈一切忙碌。"
-]
+    # 天干
+    gan = '甲乙丙丁戊己庚辛壬癸'
+    # 地支
+    zhi = '子丑寅卯辰巳午未申酉戌亥'
+    # 生肖
+    xiao = '鼠牛虎兔龙蛇马羊猴鸡狗猪'
+    # 月份
+    lm = '正二三四五六七八九十冬腊'
+    # 日份
+    ld = '初一初二初三初四初五初六初七初八初九初十十一十二十三十四十五十六十七十八十九二十廿一廿二廿三廿四廿五廿六廿七廿八廿九三十'
+    # 节气
+    jie = '小寒大寒立春雨水惊蛰春分清明谷雨立夏小满芒种夏至小暑大暑立秋处暑白露秋分寒露霜降立冬小雪大雪冬至'
 
+    def __init__(self, dt=None):
+        '''初始化：参数为datetime.datetime类实例，默认当前时间'''
+        self.localtime = dt if dt else datetime.datetime.today()
 
-def get_date():
-    random.seed(random_z())
-    t_l = random.randint(1, 9)  # 九种背景
+    def sx_year(self):  # 返回生肖年
+        ct = self.localtime  # 取当前时间
 
-    # 设置所使用的字体/颜色
-    colour_dict = {
-        1: (7, 51, 113),
-        2: (131, 56, 54),
-        3: (47, 54, 120),
-        4: (39, 88, 80),
-        5: (15, 85, 103),
-        6: (226, 86, 81),
-        7: (131, 56, 54),
-        8: (8, 53, 113),
-        9: (17, 84, 105),
-    }
-    colour = colour_dict[t_l]
-    date_font = ImageFont.truetype("./plugins/bot_moyu/font/方正粗圆宋简体.TTF", 19)  # 日期字体：方正粗圆宋简体，19
-    date_font2 = ImageFont.truetype("./plugins/bot_moyu/font/sourceserif4subhead-bold.ttf",
-                                    60)  # 日期字体：Source Serif 4 Subhead Bold，60
-    date_font3 = ImageFont.truetype("./plugins/bot_moyu/font/方正大黑简体.ttf", 16)  # 日期字体：方正大黑简体，19
-    date_font4 = ImageFont.truetype("./plugins/bot_moyu/font/方正大黑简体.ttf", 25)  # 日期字体：方正大黑简体，25
+        year = self.ln_year() - 3 - 1  # 农历年份减3 （说明：补减1）
+        year = year % 12  # 模12，得到地支数
+        return self.xiao[year]
 
-    # 打开图片
-    imageFile = "./plugins/bot_moyu/images/" + str(t_l) + ".png"
-    im1 = Image.open(imageFile)
+    def gz_year(self):  # 返回干支纪年
+        ct = self.localtime  # 取当前时间
+        year = self.ln_year() - 3 - 1  # 农历年份减3 （说明：补减1）
+        G = year % 10  # 模10，得到天干数
+        Z = year % 12  # 模12，得到地支数
+        return self.gan[G] + self.zhi[Z]
 
-    # 画图
-    draw = ImageDraw.Draw(im1)
-    # 设置日期文字位置/内容
-    draw.text((50, 70), time.strftime("%y"), colour, font=date_font)  # 年
-    draw.text((88, 70), time.strftime("%m"), colour, font=date_font)  # 月
-    draw.text((45, 80), time.strftime("%d"), colour, font=date_font2)  # 日
-    draw.text((32, 150), get_nongli_date(datetime.datetime.now()), colour, font=date_font3)  # 农历
-    draw.text((162, 140), get_week_day(datetime.datetime.now()), colour, font=date_font4)  # 星期
+    def gz_month(self):  # 返回干支纪月（未实现）
+        pass
 
-    if t_l == 6:
-        date_font5 = ImageFont.truetype("./plugins/bot_moyu/font/方正大黑简体.ttf", 20)  # 日期字体：方正大黑简体，20
-        draw.text((85, 380), get_week_day(datetime.datetime.now()), colour, font=date_font5)  # 星期
-        draw.text((195, 430), get_week_day(datetime.datetime.now()), colour, font=date_font5)  # 星期
-    elif t_l == 2:
-        date_font5 = ImageFont.truetype("./plugins/bot_moyu/font/方正大黑简体.ttf", 22)  # 日期字体：方正大黑简体，22
-        draw.text((87, 478), "周" + get_week_day(datetime.datetime.now()), colour, font=date_font5)  # 星期
-    elif t_l == 7:
-        date_font5 = ImageFont.truetype("./plugins/bot_moyu/font/方正大黑简体.ttf", 24)  # 日期字体：方正大黑简体，24
-        draw.text((177, 508), get_week_day(datetime.datetime.now()), colour, font=date_font5)  # 星期
+    def gz_day(self):  # 返回干支纪日
+        ct = self.localtime  # 取当前时间
+        C = ct.year // 100  # 取世纪数，减一
+        y = ct.year % 100  # 取年份后两位（若为1月、2月则当前年份减一）
+        y = y - 1 if ct.month == 1 or ct.month == 2 else y
+        M = ct.month  # 取月份（若为1月、2月则分别按13、14来计算）
+        M = M + 12 if ct.month == 1 or ct.month == 2 else M
+        d = ct.day  # 取日数
+        i = 0 if ct.month % 2 == 1 else 6  # 取i （奇数月i=0，偶数月i=6）
 
-    # 工作假期倒计时
-    vacation_text = get_vacation_text(time.strftime("%m%d", time.localtime()))  # 倒计时文案
-    draw.text((279, 233), random.choice(arr1).replace("$1", "周" + get_week_day(datetime.datetime.now())), colour,
-              font=date_font3)  # 宣言
-    draw.text((279, vacation_text.count('\n') * 117), vacation_text, colour, font=date_font3)  # 倒计时
+        # 下面两个是网上的公式
+        # http://baike.baidu.com/link?url=MbTKmhrTHTOAz735gi37tEtwd29zqE9GJ92cZQZd0X8uFO5XgmyMKQru6aetzcGadqekzKd3nZHVS99rewya6q
+        # 计算干（说明：补减1）
+        G = 4 * C + C // 4 + 5 * y + y // 4 + 3 * (M + 1) // 5 + d - 3 - 1
+        G = G % 10
+        # 计算支（说明：补减1）
+        Z = 8 * C + C // 4 + 5 * y + y // 4 + 3 * (M + 1) // 5 + d + 7 + i - 1
+        Z = Z % 12
 
-    # 名言名句
-    y_text = random.choice(arr2)
-    if y_text.count('\n') > 1:
-        date_font5 = ImageFont.truetype("./plugins/bot_moyu/font/江西拙楷2.0.ttf", 18)  # 日期字体：江西拙楷2.0,20
-    date_font5 = ImageFont.truetype("./plugins/bot_moyu/font/江西拙楷2.0.ttf", 20)  # 日期字体：江西拙楷2.0,20
-    draw.text((38, 675), y_text, colour, font=date_font5)  # 宣言
+        # 返回 干支纪日
+        return self.gan[G] + self.zhi[Z]
 
-    draw = ImageDraw.Draw(im1)  # Just draw it!
+    def gz_hour(self):  # 返回干支纪时（时辰）
+        ct = self.localtime  # 取当前时间
+        # 计算支
+        Z = round((ct.hour / 2) + 0.1) % 12  # 之所以加0.1是因为round的bug!!
 
-    # 另存图片
-    today = time.strftime("%d", time.localtime())
-    im1.save(r'./plugins/bot_moyu/images/output/output' + today + '.png')
+        # 返回 干支纪时（时辰）
+        return self.zhi[Z]
 
+    def ln_year(self):  # 返回农历年
+        year, _, _ = self.ln_date()
+        return year
 
-def checkUser():  # 判断是否今天获取过
-    today = time.strftime("%d", time.localtime())
-    cacheFileName = './plugins/bot_moyu/images/output/output' + today + '.png'
-    if not os.path.isfile(cacheFileName):
-        execute()
-        return True
-    return False
+    def ln_month(self):  # 返回农历月
+        _, month, _ = self.ln_date()
+        return month
 
+    def ln_day(self):  # 返回农历日
+        _, _, day = self.ln_date()
+        return day
 
-def execute():  # 删除旧记录
-    filePath = '/root/opqbot/client/botoy/plugins/bot_moyu/images/output/'
-    name = os.listdir(filePath)
-    for i in name:
-        path = '/root/opqbot/client/botoy/plugins/bot_moyu/images/output/{}'.format(i)
-        print(path)
-        if 'output' in i:
-            os.remove(path)
+    def ln_date(self):  # 返回农历日期整数元组（年、月、日）（查表法）
+        delta_days = self._date_diff()
 
-
-def random_z():
-    t = time.time()
-    time_s = str(round(t * 1000000))
-    return int(time_s[::-1][1:6])
-
-
-@plugin_receiver.group
-@plugin_receiver.friend
-@ignore_botself  # 忽略机器人自身的消息
-def receiver(ctx):
-    MsgType_t = ctx.MsgType
-    ctx_t = 0  # 记录消息是群聊还是私聊
-    try:
-        q_uin = ctx.FromGroupId
-        uin = ctx.FromUserId
-    except Exception as e:
-        uin = ctx.FromUin
-        ctx_t = 1
-    if MsgType_t == "TextMsg" or MsgType_t == "AtMsg":  # 判断消息类型
-        if MsgType_t == "AtMsg":
-            try:
-                Content_data = decode(ctx.Content)
-            except Exception as e:
-                logger.warning(f"AtMsg消息编码失败\r\n {e}")
-                return
-            QQUid_n = Content_data['UserID'][0]
-            if QQUid_n != jconfig.qq:  # 艾特的是不是机器人
-                return
-            # 艾特的是机器人，解析内容
-            cont = sub(r'@(.+) ', "", Content_data['Content'])
-        else:
-            cont = ctx.Content
-
-        if cont == "摸鱼日历":
-            today = time.strftime("%d", time.localtime())
-            if str(uin) == "1340219674":
-                execute()
-                get_date()
-            elif checkUser():
-                get_date()
-            cacheFileName = './plugins/bot_moyu/images/output/output' + today + '.png'
-            if ctx_t == 0:
-                action.sendGroupPic(group=q_uin, picBase64Buf=file_to_base64(cacheFileName))
+        # 阳历1901年2月19日为阴历1901年正月初一
+        # 阳历1901年1月1日到2月19日共有49天
+        if (delta_days < 49):
+            year = self.START_YEAR - 1
+            if (delta_days < 19):
+                month = 11;
+                day = 11 + delta_days
             else:
-                action.sendFriendPic(user=uin, picBase64Buf=file_to_base64(cacheFileName))
+                month = 12;
+                day = delta_days - 18
+            return (year, month, day)
+
+        # 下面从阴历1901年正月初一算起
+        delta_days -= 49
+        year, month, day = self.START_YEAR, 1, 1
+        # 计算年
+        tmp = self._lunar_year_days(year)
+        while delta_days >= tmp:
+            delta_days -= tmp
+            year += 1
+            tmp = self._lunar_year_days(year)
+
+        # 计算月
+        (foo, tmp) = self._lunar_month_days(year, month)
+        while delta_days >= tmp:
+            delta_days -= tmp
+            if (month == self._get_leap_month(year)):
+                (tmp, foo) = self._lunar_month_days(year, month)
+                if (delta_days < tmp):
+                    # return (0,0,0)
+                    return (year, month, delta_days + 1)
+                delta_days -= tmp
+            month += 1
+            (foo, tmp) = self._lunar_month_days(year, month)
+
+        # 计算日
+        day += delta_days
+        return (year, month, day)
+
+    def ln_date_str(self):  # 返回农历日期字符串，形如：农历正月初九
+        _, month, day = self.ln_date()
+        return '农历{}月{}'.format(self.lm[month - 1], self.ld[(day - 1) * 2:day * 2])
+
+    def ln_jie(self):  # 返回农历节气
+        ct = self.localtime  # 取当前时间
+        year = ct.year
+        for i in range(24):
+            # 因为两个都是浮点数，不能用相等表示
+            delta = self._julian_day() - self._julian_day_of_ln_jie(year, i)
+            if -.5 <= delta <= .5:
+                return self.jie[i * 2:(i + 1) * 2]
+        return ''
+
+    # 显示日历
+    def calendar(self):
+        pass
+
+    #######################################################
+    #            下面皆为私有函数
+    #######################################################
+
+    def _date_diff(self):
+        '''返回基于1901/01/01日差数'''
+        return (self.localtime - datetime.datetime(1901, 1, 1)).days
+
+    def _get_leap_month(self, lunar_year):
+        flag = self.g_lunar_month[(lunar_year - self.START_YEAR) // 2]
+        if (lunar_year - self.START_YEAR) % 2:
+            return flag & 0x0f
+        else:
+            return flag >> 4
+
+    def _lunar_month_days(self, lunar_year, lunar_month):
+        if (lunar_year < self.START_YEAR):
+            return 30
+
+        high, low = 0, 29
+        iBit = 16 - lunar_month;
+
+        if (lunar_month > self._get_leap_month(lunar_year) and self._get_leap_month(lunar_year)):
+            iBit -= 1
+
+        if (self.g_lunar_month_day[lunar_year - self.START_YEAR] & (1 << iBit)):
+            low += 1
+
+        if (lunar_month == self._get_leap_month(lunar_year)):
+            if (self.g_lunar_month_day[lunar_year - self.START_YEAR] & (1 << (iBit - 1))):
+                high = 30
+            else:
+                high = 29
+
+        return (high, low)
+
+    def _lunar_year_days(self, year):
+        days = 0
+        for i in range(1, 13):
+            (high, low) = self._lunar_month_days(year, i)
+            days += high
+            days += low
+        return days
+
+    # 返回指定公历日期的儒略日（http://blog.csdn.net/orbit/article/details/9210413）
+    def _julian_day(self):
+        ct = self.localtime  # 取当前时间
+        year = ct.year
+        month = ct.month
+        day = ct.day
+
+        if month <= 2:
+            month += 12
+            year -= 1
+
+        B = year / 100
+        B = 2 - B + year / 400
+
+        dd = day + 0.5000115740  # 本日12:00后才是儒略日的开始(过一秒钟)*/
+        return int(365.25 * (year + 4716) + 0.01) + int(30.60001 * (month + 1)) + dd + B - 1524.5
+
+    # 返回指定年份的节气的儒略日数（http://blog.csdn.net/orbit/article/details/9210413）
+    def _julian_day_of_ln_jie(self, year, st):
+        s_stAccInfo = [
+            0.00, 1272494.40, 2548020.60, 3830143.80, 5120226.60, 6420865.80,
+            7732018.80, 9055272.60, 10388958.00, 11733065.40, 13084292.40, 14441592.00,
+            15800560.80, 17159347.20, 18513766.20, 19862002.20, 21201005.40, 22529659.80,
+            23846845.20, 25152606.00, 26447687.40, 27733451.40, 29011921.20, 30285477.60]
+
+        # 已知1900年小寒时刻为1月6日02:05:00
+        base1900_SlightColdJD = 2415025.5868055555
+
+        if (st < 0) or (st > 24):
+            return 0.0
+
+        stJd = 365.24219878 * (year - 1900) + s_stAccInfo[st] / 86400.0
+
+        return base1900_SlightColdJD + stJd
+
+
+# 测试
+def test(ct=None):
+    ln = Lunar(ct)
+    print('公历 {}  北京时间 {}'.format(ln.localtime.date(), ln.localtime.time()))
+    print('{} 【{}】 {}年 {}日 {}时'.format(ln.ln_date_str(), ln.gz_year(), ln.sx_year(), ln.gz_day(), ln.gz_hour()))
+    print('节气：{}'.format(ln.ln_jie()))
+
+
+def get_gongli_date(ct=None):
+    ln = Lunar(ct)
+    return '{}'.format(ln.localtime.date())
+
+
+def get_nongli_date(ct=None):
+    ln = Lunar(ct)
+    return '{}'.format(ln.ln_date_str())
+
+
+def get_jieqi(ct=None):
+    ln = Lunar(ct)
+    return '{}'.format(ln.ln_jie())
+
+def get_week_day(date):
+    week_day_dict = {
+        0: '一',
+        1: '二',
+        2: '三',
+        3: '四',
+        4: '五',
+        5: '六',
+        6: '日',
+    }
+    day = date.weekday()
+    return week_day_dict[day]
+
+def get_vacation_text(date):
+    date_text="2022/"+date[0:2]+"/"+date[2:4]
+    date_data = datetime.date(year=2022, month=int(date[0:2]), day=int(date[2:4]))
+    result = ""  # 最终返回文本
+    Winter_Olympics_schedule_name = './plugins/bot_moyu/2022.json'  # json文件路径
+
+    # 读取数据
+    with open(Winter_Olympics_schedule_name, 'r', encoding='utf-8') as fo:
+        schedule_Data = demjson.decode(fo.read())
+        fo.close()
+
+        if(int(date)<131):
+            if (int(date) <= 103):
+                if schedule_Data['0'][0][date]:
+                    surplus_text = str(schedule_Data['0'][0][date])
+                    result = "元旦假期还剩"+surplus_text+"天\n"
+            if(int(date) > 103 and int(date_data.strftime("%w"))<6):
+                result = result+"距本周工作日结束还有"+str(6-int(date_data.strftime("%w")))+"天\n"
+            result = result+"距离春节假期还有"+str(today_main("2022/01/31")-today_main(date_text))+"天\n"+"距离清明节假期还有"+str(today_main("2022/04/03")-today_main(date_text))+"天\n"+"距离劳动节假期还有"+str(today_main("2022/04/30")-today_main(date_text))+"天\n"+"距离端午节假期还有"+str(today_main("2022/06/03")-today_main(date_text))+"天\n"
+            return result
+        elif(int(date)<403):
+            if (int(date) <= 206):
+                if schedule_Data['1'][0][date]:
+                    surplus_text = str(schedule_Data['1'][0][date])
+                    result = result + "春节假期还剩"+surplus_text+"天\n"
+            if (int(date) > 206 and int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result +"距离清明节假期还有" + str(
+                today_main("2022/04/03") - today_main(date_text)) + "天\n" + "距离劳动节假期还有" + str(
+                today_main("2022/04/30") - today_main(date_text)) + "天\n" + "距离端午节假期还有" + str(
+                today_main("2022/06/03") - today_main(date_text)) + "天\n" + "距离中秋节假期还有" + str(
+                today_main("2022/09/10") - today_main(date_text)) + "天\n"
+            return result
+        elif(int(date)<430):
+            if (int(date) <= 405):
+                if schedule_Data['2'][0][date]:
+                    surplus_text = str(schedule_Data['2'][0][date])
+                    result = result + "清明节假期还剩"+surplus_text+"天\n"
+            if (int(date) > 405 and int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result + "距离劳动节假期还有" + str(
+                today_main("2022/04/30") - today_main(date_text)) + "天\n" + "距离端午节假期还有" + str(
+                today_main("2022/06/03") - today_main(date_text)) + "天\n" + "距离中秋节假期还有" + str(
+                today_main("2022/09/10") - today_main(date_text)) + "天\n" + "距离国庆节假期还有" + str(
+                today_main("2022/10/01") - today_main(date_text)) + "天\n"
+            return result
+        elif(int(date)<603):
+            if (int(date) <= 504):
+                if schedule_Data['3'][0][date]:
+                    surplus_text = str(schedule_Data['3'][0][date])
+                    result = result + "劳动节假期还剩"+surplus_text+"天\n"
+            if (int(date) > 504 and int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result + "距离端午节假期还有" + str(
+                today_main("2022/06/03") - today_main(date_text)) + "天\n" + "距离中秋节假期还有" + str(
+                today_main("2022/09/10") - today_main(date_text)) + "天\n" + "距离国庆节假期还有" + str(
+                today_main("2022/10/01") - today_main(date_text)) + "天\n"
+            return result
+        elif(int(date)<910):
+            if (int(date) <= 605):
+                if schedule_Data['4'][0][date]:
+                    surplus_text = str(schedule_Data['4'][0][date])
+                    result = result + "端午节假期还剩"+surplus_text+"天\n"
+            if (int(date) > 605 and int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result + "距离中秋节假期还有" + str(
+                today_main("2022/09/10") - today_main(date_text)) + "天\n" + "距离国庆节假期还有" + str(
+                today_main("2022/10/01") - today_main(date_text)) + "天\n"
+            return result
+        elif(int(date)<1001):
+            if (int(date) <= 912):
+                if schedule_Data['5'][0][date]:
+                    surplus_text = str(schedule_Data['5'][0][date])
+                    result = result + "中秋节假期还剩"+surplus_text+"天\n"
+            if (int(date) > 912 and int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result + "距离国庆节假期还有" + str(
+                today_main("2022/10/01") - today_main(date_text)) + "天\n"
+            return result
+        elif(int(date)<1008):
+            if (int(date) <= 1007):
+                if schedule_Data['6'][0][date]:
+                    surplus_text = str(schedule_Data['6'][0][date])
+                    result = result + "国庆节假期还剩"+surplus_text+"天\n"
+            if (int(date) > 1007 and int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result + "距离元旦节假期还有" + str(
+                today_main("2022/12/31") - today_main(date_text)+1) + "天\n"
+            return result
+        else:
+            if (int(date_data.strftime("%w")) < 6):
+                result = result + "距本周工作日结束还有" + str(6 - int(date_data.strftime("%w"))) + "天\n"
+            result = result + "距离元旦节假期还有" + str(
+                today_main("2022/12/31") - today_main(date_text)+1) + "天\n"
+            return result
+
+def is_leap_year(year):
+    return year % 4 == 0 and year % 100 != 0 or year % 400 == 0
+
+# print(is_leap_year(2000))
+def which_day(year, month, date):
+    days_of_month = [
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    ][is_leap_year(year)]
+    # print(days_of_month)
+    total = 0
+    for index in range(month - 1):
+        total += days_of_month[index]
+
+    return total + date
+
+def today_main(s):
+    f = which_day(int(s.split('/')[0]), int(s.split('/')[1]), int(s.split('/')[2]))
+    return f
+
+# if __name__ == '__main__':
+    # ct = datetime.datetime(2015, 2, 19, 13, 0, 15)
+    # ct = datetime.datetime.now()
+    # print(today_main("2022/02/05"))
+    # print(get_vacation_text(time.strftime("%m%d", time.localtime())))
